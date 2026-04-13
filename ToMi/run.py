@@ -1,5 +1,4 @@
 """ToMi 评测脚本（单词答案版）"""
-import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -12,34 +11,12 @@ from src import runner
 from ToMi.prompts import get_template, build_prompt
 from ToMi.metrics import compute_metrics
 
+import logging
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
-def load_tomi_json(path: str, max_samples: int = 0) -> List[Dict[str, Any]]:
-    """从 JSON 文件加载 ToMi 数据。"""
-    data_path = Path(path)
-    if not data_path.is_absolute():
-        # 兼容从项目根目录外启动脚本的场景
-        project_relative = PROJECT_ROOT / data_path
-        if project_relative.exists():
-            data_path = project_relative
-
-    if not data_path.exists():
-        raise FileNotFoundError(
-            f"ToMi data file not found: {data_path}. "
-            "Please update ToMi/config.yaml:path to the real JSON location."
-        )
-
-    with data_path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    if not isinstance(data, list):
-        raise ValueError(f"Expected a list in {data_path}, got {type(data).__name__}")
-
-    if max_samples > 0:
-        data = data[:max_samples]
-    return data
+# 关闭不必要日志
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
 def extract_gold_answers(data: List[Dict[str, Any]]) -> List[str]:
@@ -49,10 +26,10 @@ def extract_gold_answers(data: List[Dict[str, Any]]) -> List[str]:
 
 def main():
     # 加载数据集配置
-    dataset_config = runner.load_dataset_config(str(PROJECT_ROOT / "ToMi/config.yaml"))
+    dataset_config = runner.load_dataset_config("ToMi/config.yaml")
 
     # 加载实验配置
-    experiment_config = runner.load_experiment_config(str(PROJECT_ROOT / "experiment_config.yaml"))
+    experiment_config = runner.load_experiment_config("experiment_config.yaml")
 
     schema = dataset_config["schema"]
     prompt_method = dataset_config["default_prompt"]
@@ -63,9 +40,10 @@ def main():
     # 创建 LLM 客户端
     client = runner.create_llm_client(experiment_config["llm_config"])
 
-    # 加载数据（ToMi 使用 JSON 文件）
-    data = load_tomi_json(
-        path=dataset_config["subset"],
+    # 加载数据
+    data = runner.load_and_limit_data(
+        subset=dataset_config["subset"],
+        datasets_path=experiment_config["datasets_path"],
         max_samples=experiment_config["max_samples"],
     )
 
@@ -88,7 +66,7 @@ def main():
         start = i * len(data)
         end = start + len(data)
         repeat_results = results[start:end]
-        predictions = [r.answer for r in repeat_results]
+        predictions = [getattr(r, "answer", "") for r in repeat_results]
         all_predictions.append(predictions)
 
         metrics = compute_metrics(predictions, data)
